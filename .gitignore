@@ -30,5 +30,7 @@ storage/
 # MacOS specific
 .DS_Store
 
+.note.txt
+
 # Compiled binary
 /ussdtcp

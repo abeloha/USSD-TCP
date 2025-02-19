@@ -233,14 +233,7 @@ func main() {
 			log.Fatalf("Failed to send Enquire Link: %v", err)
 		}
 
-		// Optional: Read and log Enquire Link Response
-		header, body, err := readResponse(conn)
-		if err != nil {
-			AppLogger.Info("Error reading Enquire Link response: %v", err)
-		} else {
-			AppLogger.Info("[ENQUIRE LINK RESPONSE] Header: %s", string(header))
-			AppLogger.Info("[ENQUIRE LINK RESPONSE] Body: %s", string(body))
-		}
+		// Handle Enquire Link Response in the loop above
 	}
 }
 
@@ -392,7 +385,7 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 	if !ussdContinue {
 		response.EndOfSession = 1
 	} 
-	
+
 	messageXML, _ := xml.Marshal(response)
 	MenuLogger.Info("Sending ussd Request...")
 	if err := sendMessage(conn, messageXML, response.RequestID); err != nil {

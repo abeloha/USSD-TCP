@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -19,6 +23,9 @@ var (
 	Password      string
 	ClientID      string
 	AppLogger     *logger.Logger
+	ErrorLogger   *logger.Logger
+	RequestLogger *logger.Logger
+	MenuLogger *logger.Logger
 )
 
 func init() {
@@ -51,38 +58,28 @@ func init() {
 		logPath = "./logs"  // default path
 	}
 	var err error
-	AppLogger, err = logger.New(logPath)
+	AppLogger, err = logger.New(logPath + "/log")
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
-}
 
-// XML Message Structures
 
-type LogonRequest struct {
-	XMLName       xml.Name `xml:"AUTHRequest"`
-	RequestID     string   `xml:"requestId"`
-	Username      string   `xml:"userName"`
-	Password      string   `xml:"passWord"`
-	ApplicationID string   `xml:"applicationId"`
-}
+	ErrorLogger, err = logger.New(logPath + "/errors")
+	if err != nil {
+		log.Fatalf("Failed to initialize error logger: %v", err)
+	}
 
-type USSDRequest struct {
-	XMLName      xml.Name `xml:"USSDRequest"`
-	RequestID    string   `xml:"requestId"`
-	MSISDN       string   `xml:"msisdn"`
-	StarCode     string   `xml:"starCode"`
-	ClientID     string   `xml:"clientId"`
-	Phase        int      `xml:"phase"`
-	DCS          int      `xml:"dcs"`
-	MsgType      int      `xml:"msgtype"`
-	UserData     string   `xml:"userdata"`
-	EndOfSession int      `xml:"EndofSession"`
-}
+	RequestLogger, err = logger.New(logPath + "/requests")
+	if err != nil {
+		log.Fatalf("Failed to initialize request logger: %v", err)
+	}
 
-type EnquireLink struct {
-	XMLName xml.Name `xml:"ENQRequest"`
+	MenuLogger, err = logger.New(logPath + "/menu")
+	if err != nil {
+		log.Fatalf("Failed to initialize menu logger: %v", err)
+	}
 }
+ 
 
 // Generates a unique Request ID (timestamp-based)
 func generateRequestID() string {
@@ -185,8 +182,9 @@ func main() {
 	// Read Logon Response
 	header, body, err := readResponse(conn)
 	if err != nil {
-		log.Fatalf("Error reading response: %v", err)
 		AppLogger.Error("Error reading response: %v", err)
+		ErrorLogger.Error("Error reading response: %v", err)
+		log.Fatalf("Error reading response: %v", err)
 	}
 
 	// Log response
@@ -219,6 +217,9 @@ func main() {
 				AppLogger.Info("[SERVER MESSAGE] Reading")
 				AppLogger.Info("[SERVER MESSAGE] Header: %s", string(header))
 				AppLogger.Info("[SERVER MESSAGE] Body: %s", string(body))
+
+				// Process the response
+				go processServerMessage(header, body, conn);
 			}
 		}
 	}()
@@ -278,6 +279,134 @@ func sendUssdMessage(conn net.Conn, msisdn, starCode, sessionID, clientID, messa
 	AppLogger.Info("[USSD RESPONSE] Body: %s", string(body))
 }
 
+
+
+// processServerMessage checks if the message matches a USSDRequest, parses it, and logs it
+func processServerMessage(header []byte, body []byte, conn net.Conn) {
+	
+	// Try to parse the XML body into USSDRequest
+	var ussdRequest USSDRequest
+	err := xml.Unmarshal(body, &ussdRequest)
+	if err != nil || ussdRequest.XMLName.Local != "USSDRequest" {
+		AppLogger.Info("[INFO] Received an unknown or invalid message, ignoring.")
+		ErrorLogger.Info("[INFO] Received an unknown or invalid message, ignoring.")
+		return
+	}
+
+	// Log the parsed USSDRequest
+	RequestLogger.Info("[INFO] Received USSD Request: %+v\n", ussdRequest)
+
+	// Handle the USSD request (custom logic can go here)
+	handleUSSDRequest(ussdRequest, conn)
+}
+
+// handleUSSDRequest processes the parsed USSD request
+func handleUSSDRequest(req USSDRequest, conn net.Conn) {
+	// Example: If there's an error code, log and ignore
+	if req.ErrorCode != "" {
+		AppLogger.Info("[ERROR] Received USSD request with error code: %s\n", req.ErrorCode)
+		return
+	}
+
+	// Example: Respond if the session should continue
+	if req.EndOfSession == 0 {
+		AppLogger.Info("[INFO] Continuing USSD session for %s with code %s\n", req.MSISDN, req.StarCode)
+
+		handleMenuRequest(req, conn)
+
+	} else {
+		AppLogger.Info("[INFO] USSD session ended for %s\n", req.MSISDN)
+	}
+}
+
+
+
+// getUSSDMenu calls the API and logs the request/response
+func handleMenuRequest(req USSDRequest, conn net.Conn) {
+
+	MenuLogger.Info("[INFO] Getting USSD menu for %s with code %s\n and request ID %s", req.MSISDN, req.StarCode, req.RequestID)
+
+	// Prepare API request payload
+	apiRequest := USSDMenuRequest{
+		Telco:     "MTN",    // Hardcoded for now; adjust as needed
+		Shortcode: req.StarCode,
+		ProductID: 1,           // Example value; change as needed
+		Phone:     req.MSISDN,
+		Input:     req.UserData,
+		SessionID: req.RequestID,
+	}
+
+	// Convert to JSON
+	requestBody, err := json.Marshal(apiRequest)
+	if err != nil {
+		MenuLogger.Error("[ERROR] Failed to marshal request: %v\n", err)
+		return
+	}
+
+	// API URL
+	apiURL := "http://64.226.76.10:8005/api/v1/product/callback/ussd"
+
+	// Make HTTP request
+	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(requestBody))
+	if err != nil {
+		MenuLogger.Error("[ERROR] Failed to call USSD menu API: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	responseBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		MenuLogger.Error("[ERROR] Failed to read response: %v\n", err)
+		return
+	}
+
+	// Log request and response
+	MenuLogger.Info("[INFO] USSD Menu API Request: %s\n", string(requestBody))
+	log.Printf("[INFO] USSD Menu API Response: %s\n", string(responseBody))
+
+	// Parse JSON response
+	var apiResponse USSDMenuResponse
+	err = json.Unmarshal(responseBody, &apiResponse)
+	if err != nil {
+		log.Printf("[ERROR] Failed to parse response JSON: %v\n", err)
+		return
+	}
+
+	// Store response as variables
+	ussdMessage := apiResponse.Message
+	ussdContinue := apiResponse.Continue
+
+	// Output stored response (for debugging)
+	MenuLogger.Info("USSD Response Message:", ussdMessage)
+	MenuLogger.Info("USSD Continue:", ussdContinue)
+
+	// You can now use `ussdMessage` and `ussdContinue` for further processing.
+
+	// send response back to client
+	var response USSDRequest
+
+	// initialize with the original request
+	response = req
+	response.UserData = ussdMessage
+
+	response.ErrorCode = ""
+
+	if ussdContinue {
+	response.EndOfSession = 0
+	} else {
+		response.EndOfSession = 1
+	}
+
+
+
+	messageXML, _ := xml.Marshal(response)
+	RequestLogger.Info("Sending ussd Request...")
+	if err := sendMessage(conn, messageXML, response.RequestID); err != nil {
+		RequestLogger.Error("Failed to ussd request message: %v", err)
+	}
+
+}
 
 // function to perform general cleanup
 func cleanup() {

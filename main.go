@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -25,7 +25,7 @@ var (
 	AppLogger     *logger.Logger
 	ErrorLogger   *logger.Logger
 	RequestLogger *logger.Logger
-	MenuLogger *logger.Logger
+	MenuLogger    *logger.Logger
 )
 
 func init() {
@@ -51,18 +51,16 @@ func init() {
 		}
 	}
 
-
 	// Initialize logger
 	logPath := os.Getenv("LOG_PATH")
 	if logPath == "" {
-		logPath = "./logs"  // default path
+		logPath = "./logs" // default path
 	}
 	var err error
 	AppLogger, err = logger.New(logPath + "/log")
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
-
 
 	ErrorLogger, err = logger.New(logPath + "/errors")
 	if err != nil {
@@ -79,7 +77,6 @@ func init() {
 		log.Fatalf("Failed to initialize menu logger: %v", err)
 	}
 }
- 
 
 // Generates a unique Request ID (timestamp-based)
 func generateRequestID() string {
@@ -89,7 +86,7 @@ func generateRequestID() string {
 // Creates a properly formatted 19-byte header
 func createHeader(sessionID string, length int) []byte {
 	header := make([]byte, 32)
-	copy(header[:16], sessionID) // Use the provided session ID
+	copy(header[:16], sessionID)             // Use the provided session ID
 	lengthStr := fmt.Sprintf("%03d", length) // Ensure message length is 3-digit
 	copy(header[16:], lengthStr)
 	return header
@@ -166,9 +163,9 @@ func main() {
 
 	// Send Logon Request
 	logon := LogonRequest{
-		RequestID:    requestID,
-		Username:     Username,
-		Password:     Password,
+		RequestID:     requestID,
+		Username:      Username,
+		Password:      Password,
 		ApplicationID: ClientID,
 	}
 
@@ -219,7 +216,7 @@ func main() {
 				AppLogger.Info("[SERVER MESSAGE] Body: %s", string(body))
 
 				// Process the response
-				go processServerMessage(header, body, conn);
+				go processServerMessage(header, body, conn)
 			}
 		}
 	}()
@@ -279,11 +276,9 @@ func sendUssdMessage(conn net.Conn, msisdn, starCode, sessionID, clientID, messa
 	AppLogger.Info("[USSD RESPONSE] Body: %s", string(body))
 }
 
-
-
 // processServerMessage checks if the message matches a USSDRequest, parses it, and logs it
 func processServerMessage(header []byte, body []byte, conn net.Conn) {
-	
+
 	// Try to parse the XML body into USSDRequest
 	var ussdRequest USSDRequest
 	err := xml.Unmarshal(body, &ussdRequest)
@@ -319,8 +314,6 @@ func handleUSSDRequest(req USSDRequest, conn net.Conn) {
 	}
 }
 
-
-
 // getUSSDMenu calls the API and logs the request/response
 func handleMenuRequest(req USSDRequest, conn net.Conn) {
 
@@ -328,9 +321,9 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 
 	// Prepare API request payload
 	apiRequest := USSDMenuRequest{
-		Telco:     "MTN",    // Hardcoded for now; adjust as needed
-		Shortcode: req.StarCode,
-		ProductID: 1,           // Example value; change as needed
+		Telco:     "MTN", // Hardcoded for now; adjust as needed
+		Shortcode: "*" + req.StarCode + "#",
+		ProductID: 2,
 		Phone:     req.MSISDN,
 		Input:     req.UserData,
 		SessionID: req.RequestID,
@@ -355,7 +348,7 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 	defer resp.Body.Close()
 
 	// Read response body
-	responseBody, err := ioutil.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		MenuLogger.Error("[ERROR] Failed to read response: %v\n", err)
 		return
@@ -363,7 +356,7 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 
 	// Log request and response
 	MenuLogger.Info("[INFO] USSD Menu API Request: %s\n", string(requestBody))
-	log.Printf("[INFO] USSD Menu API Response: %s\n", string(responseBody))
+	MenuLogger.Info("[INFO] USSD Menu API Response: %s\n", string(responseBody))
 
 	// Parse JSON response
 	var apiResponse USSDMenuResponse
@@ -393,17 +386,15 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 	response.ErrorCode = ""
 
 	if ussdContinue {
-	response.EndOfSession = 0
+		response.EndOfSession = 0
 	} else {
 		response.EndOfSession = 1
 	}
 
-
-
 	messageXML, _ := xml.Marshal(response)
-	RequestLogger.Info("Sending ussd Request...")
+	MenuLogger.Info("Sending ussd Request...")
 	if err := sendMessage(conn, messageXML, response.RequestID); err != nil {
-		RequestLogger.Error("Failed to ussd request message: %v", err)
+		MenuLogger.Error("Failed to ussd request message: %v", err)
 	}
 
 }

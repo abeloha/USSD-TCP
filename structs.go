@@ -40,6 +40,19 @@ type USSDRequest struct {
 	ErrorCode    string   `xml:"errorCode,omitempty"` // Optional field
 }
 
+type USSDResponse struct {
+	XMLName      xml.Name `xml:"USSDResponse"`
+	RequestID    string   `xml:"requestId"`
+	MSISDN       string   `xml:"msisdn"`
+	StarCode     string   `xml:"starCode"`
+	ClientID     string   `xml:"clientId"`
+	Phase        int      `xml:"phase"`
+	DCS          int      `xml:"dcs"`
+	MsgType      int      `xml:"msgtype"`
+	UserData     string   `xml:"userdata"` // Optional field
+	EndOfSession int      `xml:"EndofSession"`
+}
+
 type EnquireLink struct {
 	XMLName xml.Name `xml:"ENQRequest"`
 }

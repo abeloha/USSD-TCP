@@ -377,20 +377,22 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 	// You can now use `ussdMessage` and `ussdContinue` for further processing.
 
 	// send response back to client
-	var response USSDRequest
-
-	// initialize with the original request
-	response = req
-	response.UserData = ussdMessage
-
-	response.ErrorCode = ""
-
-	if ussdContinue {
-		response.EndOfSession = 0
-	} else {
-		response.EndOfSession = 1
+	response := USSDResponse{
+		RequestID:    req.RequestID,
+		MSISDN:       req.MSISDN,
+		StarCode:     req.StarCode,
+		ClientID:     req.ClientID,
+		Phase:        req.Phase,
+		DCS:          req.DCS,
+		MsgType:      req.MsgType,
+		UserData:     ussdMessage,
+		EndOfSession: 0,
 	}
 
+	if !ussdContinue {
+		response.EndOfSession = 1
+	} 
+	
 	messageXML, _ := xml.Marshal(response)
 	MenuLogger.Info("Sending ussd Request...")
 	if err := sendMessage(conn, messageXML, response.RequestID); err != nil {

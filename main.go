@@ -101,8 +101,6 @@ func sendMessage(conn net.Conn, message []byte, sessionID string) error {
 
 	// Log the message
 	AppLogger.Info("[SEND] Request:\n%s\n", string(fullXML))
-	AppLogger.Info("[SEND] Full Message:\n%s\n", string(fullMessage))
-
 	_, err := conn.Write(fullMessage)
 	return err
 }
@@ -138,9 +136,6 @@ func readResponse(conn net.Conn) ([]byte, []byte, error) {
 		}
 		return nil, nil, fmt.Errorf("failed to read body: %v", err)
 	}
-
-	AppLogger.Info("[RECEIVE] Header: %s\n", header)
-	AppLogger.Info("[RECEIVE] Raw Response:\n%s\n", string(body))
 
 	return header, body, nil
 }
@@ -206,14 +201,12 @@ func main() {
 			default:
 				header, body, err := readResponse(conn)
 				if err != nil {
-					AppLogger.Error("Error reading server message: %v", err)
-					// Optional: Add a small delay to prevent tight loop on continuous errors
+					// AppLogger.Error("Error reading server message: %v", err)
+					// Add a small delay to prevent tight loop on continuous errors
 					time.Sleep(1 * time.Second)
 					continue
 				}
 
-				AppLogger.Info("[SERVER MESSAGE] Reading")
-				AppLogger.Info("[SERVER MESSAGE] Header: %s", string(header))
 				AppLogger.Info("[SERVER MESSAGE] Body: %s", string(body))
 
 				// Process the response
@@ -223,7 +216,7 @@ func main() {
 	}()
 
 	// Periodic Enquire Link Request
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -233,8 +226,6 @@ func main() {
 		if err := sendMessage(conn, enqXML, sessionID); err != nil {
 			log.Fatalf("Failed to send Enquire Link: %v", err)
 		}
-
-		// Handle Enquire Link Response in the loop above
 	}
 }
 
@@ -246,51 +237,54 @@ func processServerMessage(header []byte, body []byte, conn net.Conn) {
 	var ussdRequest USSDRequest
 	err := xml.Unmarshal(body, &ussdRequest)
 	if err != nil || ussdRequest.XMLName.Local != "USSDRequest" {
-		AppLogger.Info("[INFO] Received an unknown or invalid message, ignoring.")
-		ErrorLogger.Info("[INFO] Received an unknown or invalid message, ignoring.")
+		// not a valid USSDRequest
 		return
 	}
 
 	// Log the parsed USSDRequest
 	RequestLogger.Info("[INFO] Received USSD Request: %+v\n", ussdRequest)
 
-	// Handle the USSD request (custom logic can go here)
+	// Handle the USSD request
 	handleUSSDRequest(ussdRequest, conn)
 }
 
 // handleUSSDRequest processes the parsed USSD request
 func handleUSSDRequest(req USSDRequest, conn net.Conn) {
-	// Example: If there's an error code, log and ignore
+	
 	if req.ErrorCode != "" {
-		AppLogger.Info("[ERROR] Received USSD request with error code: %s\n", req.ErrorCode)
+		AppLogger.Info("Error code: %s for %s with code %s\n", req.ErrorCode, req.MSISDN, req.RequestID)
 		return
 	}
 
-	// Example: Respond if the session should continue
 	if req.EndOfSession == 0 {
-		AppLogger.Info("[INFO] Continuing USSD session for %s with code %s\n", req.MSISDN, req.StarCode)
-
 		handleMenuRequest(req, conn)
-
 	} else {
-		AppLogger.Info("[INFO] USSD session ended for %s\n", req.MSISDN)
+		AppLogger.Info("USSD session ended for %s with code %s\n", req.MSISDN, req.RequestID)
 	}
 }
+
 
 // getUSSDMenu calls the API and logs the request/response
 func handleMenuRequest(req USSDRequest, conn net.Conn) {
 
-	MenuLogger.Info("[INFO] Getting USSD menu for %s with code %s\n and request ID %s", req.MSISDN, req.StarCode, req.RequestID)
+	if (req.MsgType != 1) {
+		AppLogger.Error("Invalid message type of %d for %s with code %s\n", req.MsgType, req.MSISDN, req.RequestID)
+		return
+	}
 
-	// apiResponse, err := getUssdMenu(req)
-	// if err != nil {
-	// 	MenuLogger.Error("[ERROR] Failed to get USSD menu: %v\n", err)
-	// 	return
-	// }
+	if (req.UserData == "") {
+		AppLogger.Error("Invalid input of %s for %s with code %s\n", req.UserData, req.MSISDN, req.RequestID)
+		return
+	}
 
-	var apiResponse USSDMenuResponse
-	apiResponse.Continue = false
-	apiResponse.Message = "This menu is coming soon"
+	AppLogger.Info("[INFO] Continuing USSD session for %s with code %s\n", req.MSISDN, req.RequestID)
+
+	//apiResponse, err := getUSSDMenu(req)
+	apiResponse, err := getUSSDMenuMock(req)
+	if err != nil {
+		MenuLogger.Error("[ERROR] Failed to get USSD menu: %v\n", err)
+		return
+	}
 
 	// Store response as variables
 	ussdMessage := apiResponse.Message
@@ -310,7 +304,7 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 		ClientID:     req.ClientID,
 		Phase:        req.Phase,
 		DCS:          req.DCS,
-		MsgType:      req.MsgType,
+		MsgType:      0,
 		UserData:     ussdMessage,
 		EndOfSession: 0,
 	}
@@ -320,7 +314,7 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 	} 
 
 	messageXML, _ := xml.Marshal(response)
-	MenuLogger.Info("Sending ussd Request...")
+	MenuLogger.Info("Sending ussd Request... for %s with code %s\n", req.MSISDN, req.RequestID)
 	if err := sendMessage(conn, messageXML, response.RequestID); err != nil {
 		MenuLogger.Error("Failed to ussd request message: %v", err)
 	}
@@ -328,7 +322,19 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 }
 
 
+func getUSSDMenuMock(req USSDRequest) (*USSDMenuResponse, error) {
+	var apiResponse USSDMenuResponse
+	apiResponse.Continue = true
+	apiResponse.Message = "This menu is coming soon"
+
+	return &apiResponse, nil
+}
+
 func getUssdMenu(req USSDRequest) (*USSDMenuResponse, error){
+
+		MenuLogger.Info("[INFO] Getting USSD menu for %s with code %s\n and request ID %s", req.MSISDN, req.StarCode, req.RequestID)
+
+
 	// Prepare API request payload
 	apiRequest := USSDMenuRequest{
 		Telco:     "MTN", // Hardcoded for now; adjust as needed

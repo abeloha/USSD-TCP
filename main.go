@@ -267,7 +267,7 @@ func handleUSSDRequest(req USSDRequest, conn net.Conn) {
 // getUSSDMenu calls the API and logs the request/response
 func handleMenuRequest(req USSDRequest, conn net.Conn) {
 
-	if (req.MsgType != 1) {
+	if (req.MsgType != 1 && req.MsgType != 4) {
 		AppLogger.Error("Invalid message type of %d for %s with code %s\n", req.MsgType, req.MSISDN, req.RequestID)
 		return
 	}
@@ -280,7 +280,7 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 	AppLogger.Info("[INFO] Continuing USSD session for %s with code %s\n", req.MSISDN, req.RequestID)
 
 	//apiResponse, err := getUSSDMenu(req)
-	apiResponse, err := getUSSDMenuMock(req)
+	apiResponse, err := getUssdMenu(req)
 	if err != nil {
 		MenuLogger.Error("[ERROR] Failed to get USSD menu: %v\n", err)
 		return
@@ -304,7 +304,7 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 		ClientID:     req.ClientID,
 		Phase:        req.Phase,
 		DCS:          req.DCS,
-		MsgType:      0,
+		MsgType:      2,
 		UserData:     ussdMessage,
 		EndOfSession: 0,
 	}
@@ -312,6 +312,7 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 	if !ussdContinue {
 		response.EndOfSession = 1
 	} 
+
 
 	messageXML, _ := xml.Marshal(response)
 	MenuLogger.Info("Sending ussd Request... for %s with code %s\n", req.MSISDN, req.RequestID)
@@ -325,7 +326,8 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 func getUSSDMenuMock(req USSDRequest) (*USSDMenuResponse, error) {
 	var apiResponse USSDMenuResponse
 	apiResponse.Continue = true
-	apiResponse.Message = "This menu is coming soon"
+	apiResponse.Message =  "Hi & Welcome to the NCC Menu &#xA;1. Data Advisory&#xA;2. Unified USSD Short Codes" 
+	//"This menu is coming soon"
 
 	return &apiResponse, nil
 }

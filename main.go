@@ -282,15 +282,15 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 
 	MenuLogger.Info("[INFO] Getting USSD menu for %s with code %s\n and request ID %s", req.MSISDN, req.StarCode, req.RequestID)
 
-	apiResponse, err := getUssdMenu(req)
-	if err != nil {
-		MenuLogger.Error("[ERROR] Failed to get USSD menu: %v\n", err)
-		return
-	}
+	// apiResponse, err := getUssdMenu(req)
+	// if err != nil {
+	// 	MenuLogger.Error("[ERROR] Failed to get USSD menu: %v\n", err)
+	// 	return
+	// }
 
-	// var apiResponse USSDMenuResponse
-	// apiResponse.Continue = false
-	// apiResponse.Message = "This menu is coming soon"
+	var apiResponse USSDMenuResponse
+	apiResponse.Continue = false
+	apiResponse.Message = "This menu is coming soon"
 
 	// Store response as variables
 	ussdMessage := apiResponse.Message
@@ -388,5 +388,14 @@ func cleanup() {
 	// Close the logger when the application exits
 	if AppLogger != nil {
 		AppLogger.Close()
+	}
+	if MenuLogger != nil {
+		MenuLogger.Close()
+	}
+	if ErrorLogger != nil {
+		ErrorLogger.Close()
+	}
+	if RequestLogger != nil {
+		RequestLogger.Close()
 	}
 }

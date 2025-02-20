@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -346,7 +347,11 @@ func getUssdMenu(req USSDRequest) (*USSDMenuResponse, error){
 	}
 
 	// API URL
-	apiURL := "http://64.226.76.10:8005/api/v1/product/callback/ussd"
+	apiURL := os.Getenv("USSD_API_URL")
+	if apiURL == "" {
+		MenuLogger.Error("[ERROR] USSD menu url not set")
+		return nil, errors.New("ussd menu url not set")
+	}
 
 	// Make HTTP request
 	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(requestBody))

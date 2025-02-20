@@ -39,7 +39,6 @@ type USSDRequest struct {
 	EndOfSession int      `xml:"EndofSession"`
 	ErrorCode    string   `xml:"errorCode,omitempty"` // Optional field
 }
-
 type USSDResponse struct {
 	XMLName      xml.Name `xml:"USSDResponse"`
 	RequestID    string   `xml:"requestId"`
@@ -49,7 +48,7 @@ type USSDResponse struct {
 	Phase        int      `xml:"phase"`
 	DCS          int      `xml:"dcs"`
 	MsgType      int      `xml:"msgtype"`
-	UserData     string   `xml:"userdata"` // Optional field
+	UserData     string   `xml:"userdata"`
 	EndOfSession int      `xml:"EndofSession"`
 }
 

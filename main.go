@@ -304,17 +304,36 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 		ClientID:     req.ClientID,
 		Phase:        req.Phase,
 		DCS:          req.DCS,
-		MsgType:      2,
+		MsgType:      2, // 2 for response expected, 3 for no response expected
 		UserData:     ussdMessage,
-		EndOfSession: 0,
+		EndOfSession: 0, // 0 for not end of session, 1 for end of session
 	}
+
 
 	if !ussdContinue {
 		response.EndOfSession = 1
+		response.MsgType = 6
 	} 
 
 
-	messageXML, _ := xml.Marshal(response)
+	// Issue with xml.MarshalIndent; using fmt.Sprintf instead.
+	// The marshalling replaces new line with special characters, making the XML not display well on mobile app.
+	// messageXML, _ := xml.MarshalIndent(response, "", "  ")
+
+	messageXML := []byte(fmt.Sprintf(`<USSDResponse>
+	<requestId>%s</requestId>
+	<msisdn>%s</msisdn>
+	<starCode>%s</starCode>
+	<clientId>%s</clientId>
+	<phase>%d</phase>
+	<dcs>%d</dcs>
+	<msgtype>%d</msgtype>
+	<userdata>%s</userdata>
+	<EndofSession>%d</EndofSession>
+	</USSDResponse>`, response.RequestID, response.MSISDN, response.StarCode, response.ClientID, response.Phase, response.DCS, response.MsgType, response.UserData, response.EndOfSession))
+
+
+
 	MenuLogger.Info("Sending ussd Request... for %s with code %s\n", req.MSISDN, req.RequestID)
 	if err := sendMessage(conn, messageXML, response.RequestID); err != nil {
 		MenuLogger.Error("Failed to ussd request message: %v", err)

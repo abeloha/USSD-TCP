@@ -237,37 +237,6 @@ func main() {
 	}
 }
 
-func sendUssdMessage(conn net.Conn, msisdn, starCode, sessionID, clientID, message string) {
-	// Send USSD Request
-	ussdReq := USSDRequest{
-		RequestID:    generateRequestID(),
-		MSISDN:       msisdn,
-		StarCode:     starCode,
-		ClientID:     clientID,
-		Phase:        2,
-		DCS:          15,
-		MsgType:      4, // Mobile-Originated USSD
-		UserData:     message,
-		EndOfSession: 0,
-	}
-
-	ussdXML, _ := xml.Marshal(ussdReq)
-	fmt.Println("Sending USSD Request...")
-	if err := sendMessage(conn, ussdXML, sessionID); err != nil {
-		log.Fatalf("Failed to send USSD request: %v", err)
-		AppLogger.Error("Failed to send USSD request: %v", err)
-	}
-
-	// Read USSD Response
-	header, body, err := readResponse(conn)
-	if err != nil {
-		AppLogger.Info("Error reading response: %v", err)
-	}
-
-	// Log USSD Response
-	AppLogger.Info("[USSD RESPONSE] Header: %s", string(header))
-	AppLogger.Info("[USSD RESPONSE] Body: %s", string(body))
-}
 
 // processServerMessage checks if the message matches a USSDRequest, parses it, and logs it
 func processServerMessage(header []byte, body []byte, conn net.Conn) {
@@ -312,52 +281,15 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 
 	MenuLogger.Info("[INFO] Getting USSD menu for %s with code %s\n and request ID %s", req.MSISDN, req.StarCode, req.RequestID)
 
-	// Prepare API request payload
-	apiRequest := USSDMenuRequest{
-		Telco:     "MTN", // Hardcoded for now; adjust as needed
-		Shortcode: "*" + req.StarCode + "#",
-		ProductID: 2,
-		Phone:     req.MSISDN,
-		Input:     req.UserData,
-		SessionID: req.RequestID,
-	}
-
-	// Convert to JSON
-	requestBody, err := json.Marshal(apiRequest)
+	apiResponse, err := getUssdMenu(req)
 	if err != nil {
-		MenuLogger.Error("[ERROR] Failed to marshal request: %v\n", err)
+		MenuLogger.Error("[ERROR] Failed to get USSD menu: %v\n", err)
 		return
 	}
 
-	// API URL
-	apiURL := "http://64.226.76.10:8005/api/v1/product/callback/ussd"
-
-	// Make HTTP request
-	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(requestBody))
-	if err != nil {
-		MenuLogger.Error("[ERROR] Failed to call USSD menu API: %v\n", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Read response body
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		MenuLogger.Error("[ERROR] Failed to read response: %v\n", err)
-		return
-	}
-
-	// Log request and response
-	MenuLogger.Info("[INFO] USSD Menu API Request: %s\n", string(requestBody))
-	MenuLogger.Info("[INFO] USSD Menu API Response: %s\n", string(responseBody))
-
-	// Parse JSON response
-	var apiResponse USSDMenuResponse
-	err = json.Unmarshal(responseBody, &apiResponse)
-	if err != nil {
-		log.Printf("[ERROR] Failed to parse response JSON: %v\n", err)
-		return
-	}
+	// var apiResponse USSDMenuResponse
+	// apiResponse.Continue = false
+	// apiResponse.Message = "This menu is coming soon"
 
 	// Store response as variables
 	ussdMessage := apiResponse.Message
@@ -392,6 +324,58 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 		MenuLogger.Error("Failed to ussd request message: %v", err)
 	}
 
+}
+
+
+func getUssdMenu(req USSDRequest) (*USSDMenuResponse, error){
+	// Prepare API request payload
+	apiRequest := USSDMenuRequest{
+		Telco:     "MTN", // Hardcoded for now; adjust as needed
+		Shortcode: "*" + req.StarCode + "#",
+		ProductID: 2,
+		Phone:     req.MSISDN,
+		Input:     req.UserData,
+		SessionID: req.RequestID,
+	}
+
+	// Convert to JSON
+	requestBody, err := json.Marshal(apiRequest)
+	if err != nil {
+		MenuLogger.Error("[ERROR] Failed to marshal request: %v\n", err)
+		return nil, err
+	}
+
+	// API URL
+	apiURL := "http://64.226.76.10:8005/api/v1/product/callback/ussd"
+
+	// Make HTTP request
+	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(requestBody))
+	if err != nil {
+		MenuLogger.Error("[ERROR] Failed to call USSD menu API: %v\n", err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		MenuLogger.Error("[ERROR] Failed to read response: %v\n", err)
+		return nil, err
+	}
+
+	// Log request and response
+	MenuLogger.Info("[INFO] USSD Menu API Request: %s\n", string(requestBody))
+	MenuLogger.Info("[INFO] USSD Menu API Response: %s\n", string(responseBody))
+
+	// Parse JSON response
+	var apiResponse USSDMenuResponse
+	err = json.Unmarshal(responseBody, &apiResponse)
+	if err != nil {
+		log.Printf("[ERROR] Failed to parse response JSON: %v\n", err)
+		return nil, err
+	}
+
+	return &apiResponse, nil
 }
 
 // function to perform general cleanup

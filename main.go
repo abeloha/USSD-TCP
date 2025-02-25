@@ -12,9 +12,13 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
+	systemHealthController "github.com/abeloha/USSDTCP/pkg/controllers/system_health"
+	"github.com/abeloha/USSDTCP/pkg/jobs"
 	"github.com/abeloha/USSDTCP/pkg/logger"
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
@@ -27,6 +31,11 @@ var (
 	ErrorLogger   *logger.Logger
 	RequestLogger *logger.Logger
 	MenuLogger    *logger.Logger
+
+
+	conn       net.Conn
+	connMutex  sync.Mutex // Ensures safe access to `conn`
+	stopChan   chan struct{}
 )
 
 func init() {
@@ -146,8 +155,13 @@ func main() {
 
 	AppLogger.Info("Starting USSD TCP Application")
 
+
+	// Start Gin HTTP server in a separate Goroutine
+	go startHTTPServer()
+
 	// Connect to server
-	conn, err := net.Dial("tcp", ServerAddress)
+	var err error
+	conn, err = net.Dial("tcp", ServerAddress)
 	if err != nil {
 		log.Fatalf("Error connecting to server: %v", err)
 		AppLogger.Error("Failed to connect to server: %v", err)
@@ -188,13 +202,47 @@ func main() {
 	sessionID := string(header[:16])
 	AppLogger.Info("Extracted Session ID: %s", sessionID)
 
+
 	// Create a channel to signal when to stop listening
-	stopChan := make(chan struct{})
+	stopChan = make(chan struct{})
 	defer close(stopChan)
 
-	// Goroutine for continuous message listening
-	go func() {
-		for {
+	// Goroutine for continuous TCP message listening
+	go listenToTCPMessages()
+
+	// Periodic Enquire Link Request
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		enquireLink := EnquireLink{}
+		enqXML, _ := xml.Marshal(enquireLink)
+		fmt.Println("Sending Enquire Link Request...")
+		if err := sendMessage(conn, enqXML, sessionID); err != nil {
+			log.Fatalf("Failed to send Enquire Link: %v", err)
+		}
+	}
+}
+
+
+// Starts the Gin HTTP server
+func startHTTPServer() {
+	r := gin.Default()
+
+	// Initialize controller
+	controller := &systemHealthController.SystemHealthController{
+	}
+	r.GET("/api/system-health", controller.Index)
+
+
+	port := os.Getenv("PORT")
+	log.Printf("Starting server on port %v", port)
+	r.Run(":" + port)
+}
+
+// Continuously listens for TCP messages
+func listenToTCPMessages() {
+for {
 			select {
 			case <-stopChan:
 				return
@@ -213,23 +261,7 @@ func main() {
 				go processServerMessage(header, body, conn)
 			}
 		}
-	}()
-
-	// Periodic Enquire Link Request
-	ticker := time.NewTicker(20 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		enquireLink := EnquireLink{}
-		enqXML, _ := xml.Marshal(enquireLink)
-		fmt.Println("Sending Enquire Link Request...")
-		if err := sendMessage(conn, enqXML, sessionID); err != nil {
-			log.Fatalf("Failed to send Enquire Link: %v", err)
-		}
-	}
 }
-
-
 // processServerMessage checks if the message matches a USSDRequest, parses it, and logs it
 func processServerMessage(header []byte, body []byte, conn net.Conn) {
 
@@ -250,7 +282,7 @@ func processServerMessage(header []byte, body []byte, conn net.Conn) {
 
 // handleUSSDRequest processes the parsed USSD request
 func handleUSSDRequest(req USSDRequest, conn net.Conn) {
-	
+
 	if req.ErrorCode != "" {
 		AppLogger.Info("Error code: %s for %s with code %s\n", req.ErrorCode, req.MSISDN, req.RequestID)
 		return
@@ -263,16 +295,17 @@ func handleUSSDRequest(req USSDRequest, conn net.Conn) {
 	}
 }
 
-
 // getUSSDMenu calls the API and logs the request/response
 func handleMenuRequest(req USSDRequest, conn net.Conn) {
 
-	if (req.MsgType != 1 && req.MsgType != 4) {
+	go UpdateMonitoringService(&req, "new", nil)
+
+	if req.MsgType != 1 && req.MsgType != 4 {
 		AppLogger.Error("Invalid message type of %d for %s with code %s\n", req.MsgType, req.MSISDN, req.RequestID)
 		return
 	}
 
-	if (req.UserData == "") {
+	if req.UserData == "" {
 		AppLogger.Error("Invalid input of %s for %s with code %s\n", req.UserData, req.MSISDN, req.RequestID)
 		return
 	}
@@ -283,6 +316,8 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 	apiResponse, err := getUssdMenu(req)
 	if err != nil {
 		MenuLogger.Error("[ERROR] Failed to get USSD menu: %v\n", err)
+		go UpdateMonitoringService(&req, "Failed to get USSD menu", err)
+
 		return
 	}
 
@@ -309,12 +344,10 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 		EndOfSession: 0, // 0 for not end of session, 1 for end of session
 	}
 
-
 	if !ussdContinue {
 		response.EndOfSession = 1
 		response.MsgType = 6
-	} 
-
+	}
 
 	// Issue with xml.MarshalIndent; using fmt.Sprintf instead.
 	// The marshalling replaces new line with special characters, making the XML not display well on mobile app.
@@ -332,29 +365,26 @@ func handleMenuRequest(req USSDRequest, conn net.Conn) {
 	<EndofSession>%d</EndofSession>
 	</USSDResponse>`, response.RequestID, response.MSISDN, response.StarCode, response.ClientID, response.Phase, response.DCS, response.MsgType, response.UserData, response.EndOfSession))
 
-
-
 	MenuLogger.Info("Sending ussd Request... for %s with code %s\n", req.MSISDN, req.RequestID)
 	if err := sendMessage(conn, messageXML, response.RequestID); err != nil {
-		MenuLogger.Error("Failed to ussd request message: %v", err)
+		MenuLogger.Error("Failed to send ussd request message: %v", err)
+		go UpdateMonitoringService(&req, "Failed to send ussd request message", err)
 	}
 
 }
 
-
 func getUSSDMenuMock(req USSDRequest) (*USSDMenuResponse, error) {
 	var apiResponse USSDMenuResponse
 	apiResponse.Continue = true
-	apiResponse.Message =  "Hi & Welcome to the NCC Menu &#xA;1. Data Advisory&#xA;2. Unified USSD Short Codes" 
+	apiResponse.Message = "Hi & Welcome to the NCC Menu &#xA;1. Data Advisory&#xA;2. Unified USSD Short Codes"
 	//"This menu is coming soon"
 
 	return &apiResponse, nil
 }
 
-func getUssdMenu(req USSDRequest) (*USSDMenuResponse, error){
+func getUssdMenu(req USSDRequest) (*USSDMenuResponse, error) {
 
-		MenuLogger.Info("[INFO] Getting USSD menu for %s with code %s\n and request ID %s", req.MSISDN, req.StarCode, req.RequestID)
-
+	MenuLogger.Info("[INFO] Getting USSD menu for %s with code %s\n and request ID %s", req.MSISDN, req.StarCode, req.RequestID)
 
 	// Prepare API request payload
 	apiRequest := USSDMenuRequest{
@@ -425,4 +455,34 @@ func cleanup() {
 	if RequestLogger != nil {
 		RequestLogger.Close()
 	}
+}
+
+func UpdateMonitoringService(req *USSDRequest, status string, err error) {
+	// update monitoring if transaction is not successful
+
+	channel := ""
+	errMsg := "None"
+
+	if err != nil {
+		channel = os.Getenv("MONITORING_USSD_FAILURE")
+		errMsg = err.Error()
+	} else {
+		channel = os.Getenv("MONITORING_USSD_COUNT")
+
+	}
+
+	if channel == "" {
+		fmt.Println("Failed to get monitoring channel")
+		return
+	}
+	// test job
+	job := jobs.NewPostMetricData(
+		channel,
+		1,
+		req.MSISDN,
+		req.RequestID,
+		fmt.Sprint("Status: ", status, ". Error: ", errMsg),
+	)
+	go job.Handle()
+
 }
